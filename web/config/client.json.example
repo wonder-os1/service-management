@@ -1,0 +1,23 @@
+{
+  "branding": {
+    "appName": "ServicePro",
+    "primaryColor": "#6366f1",
+    "tagline": "Book Appointments, Grow Your Business",
+    "logoUrl": ""
+  },
+  "features": {
+    "onlineBooking": true,
+    "serviceCatalog": true,
+    "staffManagement": true,
+    "customerReviews": true,
+    "loyaltyProgram": false,
+    "inventoryManagement": false,
+    "smsNotifications": false,
+    "whatsappAutomation": false,
+    "aiChatbot": false,
+    "advancedAnalytics": false
+  },
+  "environment": {
+    "API_URL": "http://localhost:4000/api"
+  }
+}

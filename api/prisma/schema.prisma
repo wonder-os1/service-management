@@ -1,0 +1,363 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Enums ----
+
+enum UserRole {
+  ADMIN
+  PROVIDER
+  STAFF
+  CLIENT
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum NotificationType {
+  BOOKING
+  PAYMENT
+  REVIEW
+  REMINDER
+  GENERAL
+}
+
+enum LoyaltyTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+// ---- Models ----
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  name          String
+  phone         String?
+  role          UserRole  @default(CLIENT)
+  avatar        String?
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  client        Client?
+  provider      ServiceProvider?
+  notifications Notification[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model Client {
+  id               String       @id @default(cuid())
+  userId           String       @unique
+  dateOfBirth      DateTime?
+  gender           String?
+  address          String?
+  city             String?
+  state            String?
+  pincode          String?
+  preferences      Json?        // { preferredTime, preferredProvider, notes }
+  notes            String?
+  loyaltyTier      LoyaltyTier  @default(BRONZE)
+  loyaltyPoints    Int          @default(0)
+  totalSpent       Int          @default(0)  // paise
+  visitCount       Int          @default(0)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  // Relations
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings         Booking[]
+  reviews          Review[]
+  invoices         Invoice[]
+  loyaltyHistory   LoyaltyTransaction[]
+
+  @@map("clients")
+}
+
+model ServiceProvider {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  specialization   String
+  qualifications   String[]
+  experience       Int      @default(0)  // years
+  bio              String?
+  categoryId       String?
+  isAvailable      Boolean  @default(true)
+  rating           Float    @default(0)
+  totalReviews     Int      @default(0)
+  schedule         Json?    // { mon: [{start: "09:00", end: "17:00"}], ... }
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category         ServiceCategory?  @relation(fields: [categoryId], references: [id])
+  bookings         Booking[]
+  reviews          Review[]
+  services         ProviderService[]
+
+  @@map("service_providers")
+}
+
+model ServiceCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  icon        String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  providers   ServiceProvider[]
+  services    Service[]
+
+  @@map("service_categories")
+}
+
+model Service {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  description   String?
+  categoryId    String
+  duration      Int      @default(60)     // minutes
+  price         Int                       // paise
+  comparePrice  Int?                      // paise (original / strikethrough price)
+  isActive      Boolean  @default(true)
+  image         String?
+  sortOrder     Int      @default(0)
+  metadata      Json?    // { requirements, contraindications, etc. }
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  category      ServiceCategory   @relation(fields: [categoryId], references: [id])
+  bookingItems  BookingItem[]
+  providers     ProviderService[]
+
+  @@index([categoryId])
+  @@map("services")
+}
+
+model ProviderService {
+  id           String          @id @default(cuid())
+  providerId   String
+  serviceId    String
+  customPrice  Int?            // override price in paise
+  isActive     Boolean         @default(true)
+
+  // Relations
+  provider     ServiceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  service      Service         @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, serviceId])
+  @@map("provider_services")
+}
+
+model Booking {
+  id            String        @id @default(cuid())
+  clientId      String
+  providerId    String
+  date          DateTime
+  startTime     String        // "09:00"
+  endTime       String        // "10:30"
+  status        BookingStatus @default(PENDING)
+  type          String        @default("walk-in")  // walk-in, online, phone
+  notes         String?
+  cancelReason  String?
+  totalAmount   Int           @default(0)  // paise
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  client        Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  provider      ServiceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  items         BookingItem[]
+  invoice       Invoice?
+  review        Review?
+
+  @@index([clientId])
+  @@index([providerId])
+  @@index([date])
+  @@index([status])
+  @@map("bookings")
+}
+
+model BookingItem {
+  id         String  @id @default(cuid())
+  bookingId  String
+  serviceId  String
+  quantity   Int     @default(1)
+  price      Int     // paise (snapshot at time of booking)
+  duration   Int     // minutes
+
+  // Relations
+  booking    Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  service    Service @relation(fields: [serviceId], references: [id])
+
+  @@map("booking_items")
+}
+
+model Review {
+  id         String       @id @default(cuid())
+  clientId   String
+  providerId String
+  bookingId  String       @unique
+  rating     Int          // 1-5
+  comment    String?
+  status     ReviewStatus @default(PENDING)
+  reply      String?      // provider/admin reply
+  repliedAt  DateTime?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  // Relations
+  client     Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  provider   ServiceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  booking    Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([providerId])
+  @@index([status])
+  @@map("reviews")
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  invoiceNumber String        @unique
+  clientId      String
+  bookingId     String?       @unique
+  items         Json          // [{description, quantity, unitPrice, total}]
+  subtotal      Int           // paise
+  tax           Int           // paise (GST 18%)
+  discount      Int           @default(0)
+  total         Int           // paise
+  status        PaymentStatus @default(PENDING)
+  dueDate       DateTime?
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  // Relations
+  client        Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  booking       Booking?      @relation(fields: [bookingId], references: [id])
+  payments      Payment[]
+
+  @@index([clientId])
+  @@index([status])
+  @@map("invoices")
+}
+
+model Payment {
+  id                String        @id @default(cuid())
+  invoiceId         String
+  amount            Int           // paise
+  method            String        @default("razorpay")  // razorpay, cash, card, upi
+  status            PaymentStatus @default(PENDING)
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  razorpaySignature String?
+  metadata          Json?
+  paidAt            DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  // Relations
+  invoice           Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+  @@map("payments")
+}
+
+model LoyaltyTransaction {
+  id          String   @id @default(cuid())
+  clientId    String
+  points      Int      // positive = earned, negative = redeemed
+  type        String   // earned, redeemed, bonus, expired
+  description String
+  referenceId String?  // bookingId or invoiceId
+  createdAt   DateTime @default(now())
+
+  // Relations
+  client      Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@map("loyalty_transactions")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType @default(GENERAL)
+  title     String
+  message   String
+  isRead    Boolean          @default(false)
+  data      Json?
+  createdAt DateTime         @default(now())
+
+  // Relations
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String   // CREATE, UPDATE, DELETE, LOGIN, etc.
+  entity    String   // client, booking, service, etc.
+  entityId  String?
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  // Relations
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
